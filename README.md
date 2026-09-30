@@ -137,7 +137,7 @@ nuclei -version
 Start the framework using:
 
 ```bash
-python recon.py
+bash recom.sh <authorized-domain>
 ```
 
 The framework will ask for the target domain:
@@ -188,21 +188,6 @@ The generated files contain information collected during the different stages of
 
 ---
 
-## Screenshots
-
-### Framework Execution
-
-Add a screenshot showing APTF running in the terminal.
-
-### Reconnaissance Results
-
-Add a screenshot showing the generated output directories and files.
-
-### Scan Results
-
-Add a screenshot showing an example of the generated reconnaissance or vulnerability-assessment results.
-
----
 
 ## Project Structure
 
