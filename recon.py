@@ -1,266 +1,363 @@
 import os
+import shutil
 import subprocess
-import time
-from deepseek import DeepSeekAgent  # Hypothetical AI framework
+from pathlib import Path
 
-class PentestAgent(DeepSeekAgent):
-    def __init__(self, domain, api_key):
-        super().__init__(api_key)
-        self.domain = domain
+
+class PentestAgent:
+    def __init__(self, domain):
+        self.domain = domain.strip()
+        self.base_dir = Path("outputs") / self.domain
+
+        self.subdomains_dir = self.base_dir / "subdomains"
+        self.urls_dir = self.base_dir / "extracted_urls"
+        self.gf_dir = self.base_dir / "gf_parameters"
+        self.ports_dir = self.base_dir / "port_scans"
+        self.directory_dir = self.base_dir / "directory_bruteforce"
+        self.results_dir = self.base_dir / "result"
+        self.xss_dir = self.base_dir / "xss"
+        self.cve_dir = self.base_dir / "cve"
+
         self.setup_folders()
-
-    def install_dependencies(self):
-        print("[*] Checking and installing dependencies...")
-        packages = ["subfinder", "assetfinder", "amass", "chaos", "alterx", "subjack", "shodan", "masscan", "dirsearch", "httpx", "waybackurls", "ffuf", "gau", "katana", "galer", "Gxss", "dalfox", "gf", "nuclei", "xsstrike", "kxss"]
-        for pkg in packages:
-            subprocess.run(["pip", "install", pkg])
 
     def setup_folders(self):
         print("[*] Setting up directories...")
-        os.makedirs(f"bugbounty/{self.domain}", exist_ok=True)
-        os.makedirs(f"recon_results/{self.domain}/subdomains", exist_ok=True)
-        os.makedirs(f"recon_results/{self.domain}/takeover", exist_ok=True)
-        os.makedirs(f"recon_results/{self.domain}/internal_ips", exist_ok=True)
-        os.makedirs(f"recon_results/{self.domain}/port_scans", exist_ok=True)
-        os.makedirs(f"recon_results/{self.domain}/directory_bruteforce", exist_ok=True)
-        os.makedirs(f"recon_results/{self.domain}/extracted_urls", exist_ok=True)
-        os.makedirs(f"recon_results/{self.domain}/gf_parameters", exist_ok=True)
-        os.makedirs(f"recon_results/{self.domain}/result", exist_ok=True)
-        os.makedirs(f"recon_results/{self.domain}/xss", exist_ok=True)
-        os.makedirs(f"recon_results/{self.domain}/cve", exist_ok=True)
+
+        directories = [
+            self.subdomains_dir,
+            self.urls_dir,
+            self.gf_dir,
+            self.ports_dir,
+            self.directory_dir,
+            self.results_dir,
+            self.xss_dir,
+            self.cve_dir,
+        ]
+
+        for directory in directories:
+            directory.mkdir(parents=True, exist_ok=True)
+
+    def tool_exists(self, tool):
+        return shutil.which(tool) is not None
+
+    def run_command(self, command, output_file=None):
+        tool = command[0]
+
+        if not self.tool_exists(tool):
+            print(f"[!] {tool} is not installed. Skipping.")
+            return False
+
+        print(f"[*] Running: {' '.join(command)}")
+
+        try:
+            if output_file:
+                with open(output_file, "w") as output:
+                    result = subprocess.run(
+                        command,
+                        stdout=output,
+                        stderr=subprocess.STDOUT,
+                        text=True
+                    )
+            else:
+                result = subprocess.run(command)
+
+            if result.returncode != 0:
+                print(f"[!] {tool} returned exit code {result.returncode}")
+                return False
+
+            return True
+
+        except Exception as error:
+            print(f"[!] Error running {tool}: {error}")
+            return False
 
     def enumerate_subdomains(self):
-        print(f"[*] Enumerating subdomains for {self.domain}...")
-        subprocess.run(["subfinder", "-d", self.domain, "-o", f"recon_results/{self.domain}/subdomains/sub1.txt"])
-        subprocess.run(["assetfinder", "--subs-only", self.domain, "-o", f"recon_results/{self.domain}/subdomains/sub2.txt"])
-        subprocess.run(["amass", "enum", "-norecursive", "-noalts", "-d", self.domain, "-o", f"recon_results/{self.domain}/subdomains/sub3.txt"])
-        subprocess.run(["chaos", "-d", self.domain, "-o", f"recon_results/{self.domain}/subdomains/sub4.txt"])
-        subprocess.run(["alterx", "-d", self.domain, "-o", f"recon_results/{self.domain}/subdomains/sub5.txt"])
-        subprocess.run(["findomain", "--external-subdomains", "--output", "--target", self.domain, "--unique-output", f"recon_results/{self.domain}/subdomains/sub6.txt"])
+        print(f"\n[*] Enumerating subdomains for {self.domain}...")
 
-        with open(f"recon_results/{self.domain}/subdomains/all_subdomains.txt", "w") as outfile:
-            for subfile in ["sub1.txt", "sub2.txt", "sub3.txt", "sub4.txt", "sub5.txt", "sub6.txt"]:
-                with open(f"recon_results/{self.domain}/subdomains/{subfile}") as infile:
-                    outfile.write(infile.read())
+        tools = [
+            (
+                "subfinder",
+                ["subfinder", "-d", self.domain, "-silent"],
+                self.subdomains_dir / "subfinder.txt",
+            ),
+            (
+                "assetfinder",
+                ["assetfinder", "--subs-only", self.domain],
+                self.subdomains_dir / "assetfinder.txt",
+            ),
+            (
+                "amass",
+                ["amass", "enum", "-passive", "-d", self.domain],
+                self.subdomains_dir / "amass.txt",
+            ),
+            (
+                "findomain",
+                ["findomain", "-t", self.domain, "--quiet"],
+                self.subdomains_dir / "findomain.txt",
+            ),
+        ]
 
-    def check_takeover(self):
-        print(f"[*] Checking for subdomain takeovers for {self.domain}...")
-        subprocess.run(["subjack", "-w", f"recon_results/{self.domain}/subdomains/all_subdomains.txt", "-t", "100", "-timeout", "30", "-ssl", "-c", "/usr/share/subjack/fingerprints.json", "-v", "-o", f"recon_results/{self.domain}/result/takeover.txt"])
+        for tool, command, output in tools:
+            self.run_command(command, output)
 
-    def extract_links(self):
-        print(f"[*] Extracting URLs for {self.domain}...")
-        subprocess.run(["httpx", "-l", f"recon_results/{self.domain}/subdomains/all_subdomains.txt", "-o", f"recon_results/{self.domain}/extracted_urls/live_links.txt"])
-        subprocess.run(["httprobe", "-c", "10", "-l", f"recon_results/{self.domain}/subdomains/all_subdomains.txt", "-o", f"recon_results/{self.domain}/extracted_urls/live_links.txt"])
+        all_subdomains = self.subdomains_dir / "all_subdomains.txt"
 
-        with open(f"recon_results/{self.domain}/extracted_urls/live_links.txt", "r") as infile:
-            unique_links = set(infile.readlines())
+        discovered = set()
 
-        with open(f"recon_results/{self.domain}/extracted_urls/unique_links.txt", "w") as outfile:
-            outfile.writelines(unique_links)
+        for file in self.subdomains_dir.glob("*.txt"):
+            if file.name == "all_subdomains.txt":
+                continue
 
-        subprocess.run(["gau", "-o", f"recon_results/{self.domain}/extracted_urls/extracted.txt", "-l", f"recon_results/{self.domain}/extracted_urls/unique_links.txt"])
-        subprocess.run(["waybackurls", "-o", f"recon_results/{self.domain}/extracted_urls/extracted.txt", "-l", f"recon_results/{self.domain}/extracted_urls/unique_links.txt"])
+            try:
+                with open(file, "r", errors="ignore") as source:
+                    for line in source:
+                        value = line.strip()
+                        if value:
+                            discovered.add(value)
+            except OSError:
+                pass
 
-        with open(f"recon_results/{self.domain}/extracted_urls/extracted.txt", "r") as infile:
-            cleaned_urls = set(infile.readlines())
+        with open(all_subdomains, "w") as output:
+            for subdomain in sorted(discovered):
+                output.write(subdomain + "\n")
 
-        with open(f"recon_results/{self.domain}/extracted_urls/cleaned_urls.txt", "w") as outfile:
-            outfile.writelines(cleaned_urls)
+        print(
+            f"[*] Subdomain enumeration completed. "
+            f"Found {len(discovered)} unique entries."
+        )
 
-        subprocess.run(["httpx", "-l", f"recon_results/{self.domain}/extracted_urls/cleaned_urls.txt", "-o", f"recon_results/{self.domain}/extracted_urls/final_urls.txt"])
-        subprocess.run(["httprobe", "-c", "10", "-l", f"recon_results/{self.domain}/extracted_urls/cleaned_urls.txt", "-o", f"recon_results/{self.domain}/extracted_urls/final_urls.txt"])
-        subprocess.run(["katana", "-d", "4", "-o", f"recon_results/{self.domain}/extracted_urls/final_urls.txt", "-l", f"recon_results/{self.domain}/extracted_urls/cleaned_urls.txt"])
-        subprocess.run(["galer", "-o", f"recon_results/{self.domain}/extracted_urls/final_urls.txt", "-l", f"recon_results/{self.domain}/extracted_urls/cleaned_urls.txt"])
+    def discover_live_hosts(self):
+        print("\n[*] Discovering live hosts...")
 
-    def gf_analysis(self):
-        print(f"[*] Running gf pattern matching for {self.domain}...")
-        file = f"recon_results/{self.domain}/extracted_urls/final_urls.txt"
+        input_file = self.subdomains_dir / "all_subdomains.txt"
+        output_file = self.urls_dir / "live_hosts.txt"
 
-        if not os.path.isfile(file):
-            print("Error: No extracted URLs found!")
+        if not input_file.exists():
+            print("[!] Subdomain list not found.")
             return
 
-        os.makedirs(f"recon_results/{self.domain}/gf_parameters", exist_ok=True)
+        if self.tool_exists("httpx"):
+            self.run_command(
+                [
+                    "httpx",
+                    "-l",
+                    str(input_file),
+                    "-silent",
+                ],
+                output_file,
+            )
+        else:
+            print("[!] httpx is not installed. Skipping live host discovery.")
 
-        patterns = ["debug_logic", "idor", "img-traversal", "interestingEXT", "interestingparams", "interestingsubs", "jsvar", "lfi", "rce", "redirect", "sqli", "ssrf", "ssti", "xss"]
+    def collect_urls(self):
+        print("\n[*] Collecting URLs...")
+
+        live_hosts = self.urls_dir / "live_hosts.txt"
+
+        if not live_hosts.exists():
+            print("[!] Live host list not found. Skipping URL collection.")
+            return
+
+        collected = self.urls_dir / "collected_urls.txt"
+
+        if self.tool_exists("gau"):
+            self.run_command(
+                [
+                    "gau",
+                    "--subs",
+                    self.domain,
+                ],
+                collected,
+            )
+
+        elif self.tool_exists("waybackurls"):
+            self.run_command(
+                [
+                    "waybackurls",
+                    self.domain,
+                ],
+                collected,
+            )
+
+        else:
+            print("[!] Neither gau nor waybackurls is installed.")
+
+    def analyze_parameters(self):
+        print("\n[*] Running GF parameter analysis...")
+
+        urls_file = self.urls_dir / "collected_urls.txt"
+
+        if not urls_file.exists():
+            print("[!] URL collection file not found.")
+            return
+
+        patterns = [
+            "xss",
+            "sqli",
+            "ssrf",
+            "lfi",
+            "rce",
+            "redirect",
+            "idor",
+        ]
+
+        if not self.tool_exists("gf"):
+            print("[!] gf is not installed. Skipping GF analysis.")
+            return
+
         for pattern in patterns:
-            print(f"[*] Running gf for {pattern}...")
-            os.makedirs(f"recon_results/{self.domain}/gf_parameters/{pattern}", exist_ok=True)
-            subprocess.run(["gf", pattern, "-o", f"recon_results/{self.domain}/gf_parameters/{pattern}/{pattern}.txt", "-l", file])
+            pattern_dir = self.gf_dir / pattern
+            pattern_dir.mkdir(parents=True, exist_ok=True)
+
+            output = pattern_dir / f"{pattern}.txt"
+
+            self.run_command(
+                [
+                    "gf",
+                    pattern,
+                ],
+                output_file=output,
+            )
 
     def perform_port_scan(self):
-        print(f"[*] Performing port scan on {self.domain}...")
-        subprocess.run(["nmap", self.domain, "-p1-65535", "--rate=1000", "-oN", f"recon_results/{self.domain}/port_scans/ports.txt"])
+        print("\n[*] Performing port scan...")
+
+        output = self.ports_dir / "ports.txt"
+
+        self.run_command(
+            [
+                "nmap",
+                self.domain,
+                "-p",
+                "1-1000",
+                "-sV",
+                "-oN",
+                str(output),
+            ]
+        )
 
     def directory_bruteforce(self):
-        print(f"[*] Performing directory brute-forcing on {self.domain}...")
-        subprocess.run(["dirsearch", "-u", self.domain, "-e", "*", "-o", f"recon_results/{self.domain}/directory_bruteforce/dirsearch.txt"])
+        print("\n[*] Performing directory enumeration...")
 
-    def test_vulnerabilities(self):
-        print(f"[*] Running vulnerability tests for {self.domain}...")
+        output = self.directory_dir / "dirsearch.txt"
 
-        # XSS Testing
-        self.find_xss_vulnerabilities()
+        if not self.tool_exists("dirsearch"):
+            print("[!] dirsearch is not installed. Skipping.")
+            return
 
-        # SSRF Testing
-        subprocess.run(["ssrftool", "-domains", f"recon_results/{self.domain}/extracted_urls/unique_links.txt", "-payloads", "~/.git/ssrf-tool/important/payloads.txt", "-silent=false", "-paths=true", "-patterns", "~/.git/ssrf-tool/important/patterns.txt", "-o", f"recon_results/{self.domain}/result/ssrf1.txt"])
-        subprocess.run(["ssrftool", "-domains", f"recon_results/{self.domain}/extracted_urls/cleaned_urls.txt", "-payloads", "~/.git/ssrf-tool/important/payloads.txt", "-silent=false", "-paths=true", "-patterns", "~/.git/ssrf-tool/important/patterns.txt", "-o", f"recon_results/{self.domain}/result/ssrf2.txt"])
-        subprocess.run(["ssrftool", "-domains", f"recon_results/{self.domain}/ssrf/ssrf1.txt", "-payloads", "~/.git/ssrf-tool/important/payloads.txt", "-silent=false", "-paths=true", "-patterns", "~/.git/ssrf-tool/important/patterns.txt", "-o", f"recon_results/{self.domain}/result/ssrf3.txt"])
+        self.run_command(
+            [
+                "dirsearch",
+                "-u",
+                f"https://{self.domain}",
+                "-o",
+                str(output),
+            ]
+        )
 
-        # SQL Injection Testing
-        subprocess.run(["bash", "sqli", f"recon_results/{self.domain}/gf_parameters/sqli/sqli.txt", "-o", f"recon_results/{self.domain}/result/sqli_sqlmap_result.txt"])
+    def vulnerability_assessment(self):
+        print("\n[*] Running vulnerability assessment...")
 
-        # Nuclei Vulnerability Scanner
-        subprocess.run(["nuclei", "-t", "./nuclei-templates/", "-o", f"recon_results/{self.domain}/result/result.txt", "-l", f"recon_results/{self.domain}/extracted_urls/final_urls.txt"])
+        urls_file = self.urls_dir / "collected_urls.txt"
+        output = self.results_dir / "nuclei_results.txt"
 
-    def find_xss_vulnerabilities(self):
-        print(f"[*] Finding XSS vulnerabilities for {self.domain}...")
+        if not urls_file.exists():
+            print("[!] No URL file available for vulnerability assessment.")
+            return
 
-        # Reflected XSS Methods
-        self.reflected_xss_methods()
+        if not self.tool_exists("nuclei"):
+            print("[!] nuclei is not installed. Skipping.")
+            return
 
-        # Stored XSS Methods
-        self.stored_xss_methods()
+        self.run_command(
+            [
+                "nuclei",
+                "-l",
+                str(urls_file),
+                "-o",
+                str(output),
+            ]
+        )
 
-        # Blind XSS Methods
-        self.blind_xss_methods()
+    def xss_assessment(self):
+        print("\n[*] Running XSS assessment...")
 
-        # DOM XSS Methods
-        self.dom_xss_methods()
+        urls_file = self.urls_dir / "collected_urls.txt"
 
-        # Generate XSS Report
-        self.generate_xss_report()
+        if not urls_file.exists():
+            print("[!] URL collection file not found.")
+            return
 
-    def reflected_xss_methods(self):
-        print(f"[*] Finding Reflected XSS vulnerabilities for {self.domain}...")
+        output = self.xss_dir / "dalfox_results.txt"
 
-        # Method 1: Using XSS Scanners
-        subprocess.run(["xsstrike", "-u", f"recon_results/{self.domain}/extracted_urls/final_urls.txt", "-o", f"recon_results/{self.domain}/xss/xsstrike.txt"])
-        subprocess.run(["kxss", "-i", f"recon_results/{self.domain}/extracted_urls/final_urls.txt", "-o", f"recon_results/{self.domain}/xss/kxss.txt"])
-        
-        
-        
-        # Method 2: Using Waybackurls and similar tools
-        
-        subprocess.run(["gau", "-o", f"recon_results/{self.domain}/xss/waybackurls.txt", self.domain])
-        subprocess.run(["grep", "=", f"recon_results/{self.domain}/xss/waybackurls.txt", ">", f"recon_results/{self.domain}/xss/params.txt"])
-        subprocess.run(["Gxss", "-o", f"recon_results/{self.domain}/xss/gxss.txt", "-l", f"recon_results/{self.domain}/xss/params.txt"])
-        subprocess.run(["dalfox", "pipe", "-o", f"recon_results/{self.domain}/xss/dalfox.txt", "-l", f"recon_results/{self.domain}/xss/gxss.txt"])
+        if self.tool_exists("dalfox"):
+            self.run_command(
+                [
+                    "dalfox",
+                    "file",
+                    str(urls_file),
+                ],
+                output,
+            )
+        else:
+            print("[!] dalfox is not installed. Skipping XSS assessment.")
 
-        # Method 3: Using Google Dorks (Manual Step)
-        print("[*] Use Google Dorks to find URLs with parameters and test for XSS manually or with tools.")
+    def generate_summary(self):
+        print("\n[*] Generating scan summary...")
 
-        # Method 4: Find Hidden Variables in Source Code
-        print("[*] Check JavaScript and HTML source files for hidden or unused variables.")
+        summary = self.results_dir / "scan_summary.txt"
 
-        # Method 5: Other Methods
-        print("[*] Use Arjun to find hidden parameters and test for XSS.")
+        with open(summary, "w") as report:
+            report.write("APTF - Automated Penetration Testing Framework\n")
+            report.write("=" * 55 + "\n\n")
+            report.write(f"Target: {self.domain}\n\n")
 
-        # Automated XSS Detection
-        print("[*] Running automated XSS detection...")
-        subprocess.run(["waybackurls", self.domain, "|", "gf", "xss", "|", "sed", "'s/=.*/=/'", "|", "sort", "-u", "|", "tee", "Possible_xss.txt", "&&", "cat", "Possible_xss.txt", "|", "dalfox", "-b", "blindxss.xss.ht", "pipe", ">", "output.txt"])
+            report.write("Generated Directories:\n")
+            report.write("-" * 25 + "\n")
 
-    def stored_xss_methods(self):
-        print(f"[*] Finding Stored XSS vulnerabilities for {self.domain}...")
+            for directory in [
+                self.subdomains_dir,
+                self.urls_dir,
+                self.gf_dir,
+                self.ports_dir,
+                self.directory_dir,
+                self.results_dir,
+                self.xss_dir,
+                self.cve_dir,
+            ]:
+                report.write(f"- {directory}\n")
 
-        # Try payloads in various input fields
-        print("[*] Test for stored XSS in input fields, comments, profile pictures, etc.")
-
-    def blind_xss_methods(self):
-        print(f"[*] Finding Blind XSS vulnerabilities for {self.domain}...")
-
-        # Use XSS Hunter or similar tools
-        print("[*] Use XSS Hunter or similar tools to find blind XSS vulnerabilities.")
-
-    def dom_xss_methods(self):
-        print(f"[*] Finding DOM XSS vulnerabilities for {self.domain}...")
-
-        # Use Burp Suite PRO scanner or other tools
-        print("[*] Use Burp Suite PRO scanner or other tools to find DOM XSS vulnerabilities.")
-
-        # Automated DOM XSS Detection
-        print("[*] Running automated DOM XSS detection...")
-        sources = [
-            "document.URL", "document.documentURI", "document.URLUnencoded", "document.baseURI", "location",
-            "location.href", "location.search", "location.hash", "location.pathname", "document.cookie",
-            "document.referrer", "window.name", "history.pushState", "history.replaceState", "localStorage",
-            "sessionStorage"
-        ]
-        sinks = [
-            "eval", "Function", "setTimeout", "setInterval", "setImmediate", "execScript", "crypto.generateCRMFRequest",
-            "ScriptElement.src", "ScriptElement.text", "ScriptElement.textContent", "ScriptElement.innerText",
-            "anyTag.onEventName", "document.write", "document.writeln", "anyElement.innerHTML",
-            "Range.createContextualFragment", "window.location", "document.location"
-        ]
-        for source in sources:
-            for sink in sinks:
-                subprocess.run(["grep", "-r", f"{source}.*{sink}", f"recon_results/{self.domain}/extracted_urls/"])
-
-    def generate_xss_report(self):
-        print(f"[*] Generating XSS report for {self.domain}...")
-
-        report_path = f"recon_results/{self.domain}/xss/xss_report.txt"
-        with open(report_path, "w") as report:
-            report.write(f"XSS Vulnerability Report for {self.domain}\n")
-            report.write("="*50 + "\n\n")
-
-            tools = ["gxss", "dalfox", "xsstrike", "kxss", "nuclei_xss"]
-            for tool in tools:
-                report.write(f"Results from {tool}:\n")
-                result_file = f"recon_results/{self.domain}/xss/{tool}.txt"
-                if os.path.isfile(result_file):
-                    with open(result_file, "r") as result:
-                        report.write(result.read())
-                else:
-                    report.write("No results found.\n")
-                report.write("\n" + "="*50 + "\n\n")
-
-        print(f"[*] XSS report generated at {report_path}")
-
-    def find_cve_vulnerabilities(self):
-        print(f"[*] Finding CVE vulnerabilities for {self.domain}...")
-
-        # Using Nuclei for CVEs
-        subprocess.run(["nuclei", "-t", "cves/", "-o", f"recon_results/{self.domain}/cve/nuclei_cve.txt", "-l", f"recon_results/{self.domain}/extracted_urls/final_urls.txt"])
-
-        # Generate CVE Report
-        self.generate_cve_report()
-
-    def generate_cve_report(self):
-        print(f"[*] Generating CVE report for {self.domain}...")
-
-        report_path = f"recon_results/{self.domain}/cve/cve_report.txt"
-        with open(report_path, "w") as report:
-            report.write(f"CVE Vulnerability Report for {self.domain}\n")
-            report.write("="*50 + "\n\n")
-
-            tools = ["nuclei_cve"]
-            for tool in tools:
-                report.write(f"Results from {tool}:\n")
-                result_file = f"recon_results/{self.domain}/cve/{tool}.txt"
-                if os.path.isfile(result_file):
-                    with open(result_file, "r") as result:
-                        report.write(result.read())
-                else:
-                    report.write("No results found.\n")
-                report.write("\n" + "="*50 + "\n\n")
-
-        print(f"[*] CVE report generated at {report_path}")
+        print(f"[*] Summary generated: {summary}")
 
     def run(self):
-        self.install_dependencies()
+        print("\n" + "=" * 60)
+        print("APTF - Automated Penetration Testing Framework")
+        print("=" * 60)
+        print(f"Target: {self.domain}")
+        print("=" * 60)
+
         self.enumerate_subdomains()
-        self.check_takeover()
-        self.extract_links()
-        self.gf_analysis()
+        self.discover_live_hosts()
+        self.collect_urls()
+        self.analyze_parameters()
         self.perform_port_scan()
         self.directory_bruteforce()
-        self.test_vulnerabilities()
-        self.find_cve_vulnerabilities()
-        print(f"[*] Recon process completed for {self.domain}!")
+        self.vulnerability_assessment()
+        self.xss_assessment()
+        self.generate_summary()
+
+        print("\n" + "=" * 60)
+        print("[+] APTF scan workflow completed.")
+        print(f"[+] Results saved in: {self.base_dir}")
+        print("=" * 60)
+
 
 if __name__ == "__main__":
-    domain = input("Enter the domain to scan: ")
-    api_key = "sk-36312949694f430c9c60510a728c6416"  # Your DeepSeek API key
-    agent = PentestAgent(domain, api_key)
+    domain = input("Enter the authorized target domain: ").strip()
+
+    if not domain:
+        print("[!] No domain provided.")
+        raise SystemExit(1)
+
+    agent = PentestAgent(domain)
     agent.run()
