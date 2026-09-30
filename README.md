@@ -1,4 +1,4 @@
-# NGPTF - Automated Penetration Testing Framework
+# APTF - Automated Penetration Testing Framework
 
 An Automated Penetration Testing Framework developed as a Bachelor of Computer Applications (BCA) Major Project.
 
